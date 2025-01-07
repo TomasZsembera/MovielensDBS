@@ -17,13 +17,15 @@ CREATE TABLE occupations_staging (
 
 CREATE OR REPLACE TABLE users_staging (
     id INT PRIMARY KEY,
-    gender CHAR(45),
-    zip_code VARCHAR(255),
     age INT,
+    gender CHAR(45),
     occupation_id INT,
+    zip_code VARCHAR(255),
     FOREIGN KEY (age) REFERENCES age_group_staging(id),
     FOREIGN KEY (occupation_id) REFERENCES occupations_staging(id)
 );
+
+select * from users_staging;
 
 CREATE TABLE movies_staging (
     id INT PRIMARY KEY,
@@ -103,14 +105,15 @@ COPY INTO tags_staging
 FROM @movielens_stage/tags.csv
 FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1);
 
--- CREATE TABLE dim_movies AS 
--- SELECT DISTINCT
---     m.title AS dim_moviesId,
---     g.name AS genre,
---     m.release_year AS release_year,
--- FROM movies_staging m 
--- JOIN genres_movies gm ON m.id = gm.id
--- JOIN genres g ON gm.id = g.id; 
+
+--CREATE TABLE dim_movies AS 
+--SELECT DISTINCT
+--    m.title AS dim_moviesId,
+--    g.name AS genre,
+--    m.release_year AS release_year,
+--FROM movies_staging m 
+--JOIN genres_movies gm ON m.id = gm.id
+--JOIN genres g ON gm.id = g.id; 
 
 CREATE OR REPLACE TABLE dim_movies AS
 SELECT DISTINCT
@@ -124,27 +127,34 @@ JOIN genres_staging g ON gm.genre_id = g.id;
 
 
 
--- CREATE OR REPLACE TABLE dim_users AS 
--- SELECT DISTINCT
---     u.id AS dim_userId,
---     u.zip_code AS zip_code,
---     a.name AS age_group,
---     o.name AS occupation,
---     u.gender AS gender, 
--- FROM users_staging u 
--- JOIN occupations_staging o ON u.id = o.id
--- JOIN age_group_staging a ON u.id = a.id;
+--CREATE OR REPLACE TABLE dim_users AS 
+--SELECT DISTINCT
+--    u.id AS dim_userId,
+--    u.zip_code AS zip_code,
+--    a.name AS age_group,
+--    o.name AS occupation,
+--    u.gender AS gender, 
+--FROM users_staging u 
+--JOIN occupations_staging o ON u.id = o.id
+--JOIN age_group_staging a ON u.id = a.id;
 
-CREATE OR REPLACE TABLE dim_users AS 
+CREATE OR REPLACE TABLE dim_users AS
 SELECT DISTINCT
-    u.id AS dim_userId,
-    u.zip_code AS zip_code,
-    a.name AS age_group,
+    u.id AS dim_userid,
+    ag.name AS age_group,
+    u.gender,
     o.name AS occupation,
-    u.gender AS gender
-FROM users_staging u 
-JOIN occupations_staging o ON u.occupation_id = o.id
-JOIN age_group_staging a ON u.age = a.id;
+    u.zip_code
+FROM users_staging u
+JOIN age_group_staging ag ON u.age = ag.id
+JOIN occupations_staging o ON u.occupation_id = o.id;
+
+SELECT * FROM users_staging;
+SELECT * FROM age_group_staging;
+SELECT * FROM occupations_staging;
+
+
+select * from dim_users;
 
 
 CREATE OR REPLACE TABLE dim_date AS
