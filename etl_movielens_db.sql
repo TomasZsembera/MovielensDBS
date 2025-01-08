@@ -33,6 +33,7 @@ CREATE TABLE movies_staging (
     release_year CHAR(4)
 );
 
+
 CREATE TABLE genres_staging (
     id INT PRIMARY KEY,
     name VARCHAR(255)
@@ -106,14 +107,14 @@ FROM @movielens_stage/tags.csv
 FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1);
 
 
---CREATE TABLE dim_movies AS 
---SELECT DISTINCT
---    m.title AS dim_moviesId,
---    g.name AS genre,
---    m.release_year AS release_year,
---FROM movies_staging m 
---JOIN genres_movies gm ON m.id = gm.id
---JOIN genres g ON gm.id = g.id; 
+//CREATE TABLE dim_movies AS 
+//SELECT DISTINCT
+//    m.title AS dim_moviesId,
+//    g,name AS genre,
+//    m.release_year AS release_year,
+//FROM movies_staging m 
+//JOIN genres_movies gm ON m.id = gm.id
+//JOIN genres g ON gm.id = g.id; 
 
 CREATE OR REPLACE TABLE dim_movies AS
 SELECT DISTINCT
@@ -126,17 +127,16 @@ JOIN genres_movies_staging gm ON m.id = gm.movie_id
 JOIN genres_staging g ON gm.genre_id = g.id;
 
 
-
---CREATE OR REPLACE TABLE dim_users AS 
---SELECT DISTINCT
---    u.id AS dim_userId,
---    u.zip_code AS zip_code,
---    a.name AS age_group,
---    o.name AS occupation,
---    u.gender AS gender, 
---FROM users_staging u 
---JOIN occupations_staging o ON u.id = o.id
---JOIN age_group_staging a ON u.id = a.id;
+//CREATE OR REPLACE TABLE dim_users AS 
+//SELECT DISTINCT
+//    u.id AS dim_userId,
+//    u.zip_code AS zip_code,
+//    a.name AS age_group,
+//    o.name AS occupation,
+//    u.gender AS gender, 
+//FROM users_staging u 
+//JOIN occupations_staging o ON u.id = o.id
+//JOIN age_group_staging a ON u.id = a.id;
 
 CREATE OR REPLACE TABLE dim_users AS
 SELECT DISTINCT
@@ -157,12 +157,15 @@ SELECT * FROM occupations_staging;
 select * from dim_users;
 
 
+
+
+
 CREATE OR REPLACE TABLE dim_date AS
 SELECT
     ROW_NUMBER() OVER (ORDER BY CAST(rated_at AS DATE)) AS dim_dateId,
     CAST(rated_at AS DATE) AS date,
     DATE_PART(day, rated_at) AS day,
-    CASE DATE_PART(day, rated_at) + 1
+    CASE DATE_PART(dow, rated_at)
         WHEN 0 THEN 'Nedeľa'
         WHEN 1 THEN 'Pondelok'
         WHEN 2 THEN 'Utorok'
@@ -172,26 +175,49 @@ SELECT
         WHEN 6 THEN 'Sobota'
     END AS day_as_string,
     DATE_PART(month, rated_at) AS month,
-    DATE_PART(year, rated_at) AS year,
+    DATE_PART(year, rated_at) AS year
 FROM ratings_staging;
 
+
+select * from dim_date;
+
+SELECT * FROM dim_date LIMIT 10;
+
+
+
+
+//CREATE OR REPLACE TABLE fact_ratings AS
+//SELECT DISTINCT
+//    r.id AS fact_ratingId,
+//    r.rated_at AS rated_at,
+//    u.dim_userid AS dim_userId,
+//    m.dim_moviesId AS dim_moviesId,
+//    d.dim_dateid AS dim_dateId,
+//    r.rating AS rating
+//FROM ratings_staging r
+//JOIN dim_users u ON r.user_id = u.dim_userid
+//JOIN dim_movies m ON r.movie_id = m.dim_moviesId
+//JOIN dim_date d ON CAST(r.rated_at AS DATE) = d.date;
+
+
 CREATE OR REPLACE TABLE fact_ratings AS
-SELECT 
+SELECT
     r.id AS fact_ratingId,
-    r.rated_at AS rated_at,
-    u.dim_userId AS dim_userId,
-    m.dim_moviesId AS dim_moviesId,
-    d.dim_dateId AS dim_dateId,
+    r.user_id AS dim_userId,
+    r.movie_id AS dim_moviesId,
     r.rating AS rating,
-    LISTAGG(t.tags, ', ') WITHIN GROUP (ORDER BY t.tags) AS tags,
+    r.rated_at AS rated_at,
+    (SELECT LISTAGG(tg.tags, ', ') WITHIN GROUP (ORDER BY tg.tags)
+     FROM tags_staging tg
+     WHERE tg.user_id = r.user_id AND tg.movie_id = r.movie_id) AS tags,
+    d.dim_dateid AS dim_dateId
 FROM ratings_staging r
-JOIN dim_users u ON r.user_id = u.dim_userId
-JOIN dim_movies m ON r.movie_id = m.dim_moviesId
-JOIN dim_date d ON CAST(r.rated_at AS DATE) = d.date
-LEFT JOIN tags_staging t ON r.user_id = t.user_id AND r.movie_id = t.movie_id
-GROUP BY r.id, r.rated_at, u.dim_userId, m.dim_moviesId, d.dim_dateId, r.rating;
+LEFT JOIN dim_date d 
+    ON CAST(r.rated_at AS DATE) = d.date;
 
 
+
+select * from fact_ratings;
 
 DROP TABLE IF EXISTS age_group_staging; 
 DROP TABLE IF EXISTS genres_movies_staging;
