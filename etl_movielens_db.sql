@@ -9,10 +9,14 @@ CREATE TABLE age_group_staging (
     name VARCHAR(45)
 );
 
+select * from age_group_staging;
+
 CREATE TABLE occupations_staging (
     id INT PRIMARY KEY,
     name VARCHAR(255)
 );
+
+select * from movies_staging;
 
 
 CREATE OR REPLACE TABLE users_staging (
@@ -68,6 +72,7 @@ CREATE TABLE ratings_staging (
 );
 
 
+
 CREATE OR REPLACE STAGE movielens_stage;
 
 list @movielens_stage;
@@ -83,8 +88,7 @@ FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1);
 
 COPY INTO users_staging
 FROM @movielens_stage/users1.csv
-FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1)
-ON_ERROR = 'CONTINUE';
+FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1);
 
 COPY INTO genres_staging
 FROM @movielens_stage/genres.csv
@@ -107,36 +111,23 @@ FROM @movielens_stage/tags.csv
 FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1);
 
 
-//CREATE TABLE dim_movies AS 
-//SELECT DISTINCT
-//    m.title AS dim_moviesId,
-//    g,name AS genre,
-//    m.release_year AS release_year,
-//FROM movies_staging m 
-//JOIN genres_movies gm ON m.id = gm.id
-//JOIN genres g ON gm.id = g.id; 
 
 CREATE OR REPLACE TABLE dim_movies AS
-SELECT DISTINCT
-    m.id AS dim_moviesId,
+SELECT DISTINCT 
+    m.id AS dim_movieid,
     m.title AS title,
+    m.release_year AS release_year,
     g.name AS genre,
-    m.release_year AS release_year
+    COALESCE(LISTAGG(t.tags, ', ') WITHIN GROUP (ORDER BY t.tags), 'No Tags') AS tags
 FROM movies_staging m
-JOIN genres_movies_staging gm ON m.id = gm.movie_id
-JOIN genres_staging g ON gm.genre_id = g.id;
+JOIN genres_movies_staging gr ON m.id = gr.movie_id
+JOIN genres_staging g ON gr.genre_id = g.id
+LEFT JOIN tags_staging t ON m.id = t.movie_id
+GROUP BY m.id, m.title, m.release_year, g.name;
 
 
-//CREATE OR REPLACE TABLE dim_users AS 
-//SELECT DISTINCT
-//    u.id AS dim_userId,
-//    u.zip_code AS zip_code,
-//    a.name AS age_group,
-//    o.name AS occupation,
-//    u.gender AS gender, 
-//FROM users_staging u 
-//JOIN occupations_staging o ON u.id = o.id
-//JOIN age_group_staging a ON u.id = a.id;
+select * from dim_movies;
+
 
 CREATE OR REPLACE TABLE dim_users AS
 SELECT DISTINCT
@@ -149,15 +140,19 @@ FROM users_staging u
 JOIN age_group_staging ag ON u.age = ag.id
 JOIN occupations_staging o ON u.occupation_id = o.id;
 
-SELECT * FROM users_staging;
-SELECT * FROM age_group_staging;
-SELECT * FROM occupations_staging;
-
-
 select * from dim_users;
 
 
+CREATE OR REPLACE TABLE dim_tags AS
+SELECT DISTINCT
+    tg.id,
+    tg.movie_id,
+    tg.user_id,
+    tg.tags AS tag,
+    tg.created_at
+FROM tags_staging tg;
 
+select * from dim_tags;
 
 
 CREATE OR REPLACE TABLE dim_date AS
@@ -185,39 +180,48 @@ SELECT * FROM dim_date LIMIT 10;
 
 
 
+CREATE OR REPLACE TABLE dim_time AS
+SELECT DISTINCT
+    ROW_NUMBER() OVER (ORDER BY DATE_PART(hour, rated_at), DATE_PART(minute, rated_at), DATE_PART(second, rated_at)) AS dim_timeid,
+    DATE_PART(hour, rated_at) AS hour,
+    DATE_PART(minute, rated_at) AS minute,
+    DATE_PART(second, rated_at) AS second
+FROM ratings_staging
+GROUP BY 
+    DATE_PART(hour, rated_at),
+    DATE_PART(minute, rated_at),
+    DATE_PART(second, rated_at)
+ORDER BY 
+    DATE_PART(hour, rated_at),
+    DATE_PART(minute, rated_at),
+    DATE_PART(second, rated_at);
 
-//CREATE OR REPLACE TABLE fact_ratings AS
-//SELECT DISTINCT
-//    r.id AS fact_ratingId,
-//    r.rated_at AS rated_at,
-//    u.dim_userid AS dim_userId,
-//    m.dim_moviesId AS dim_moviesId,
-//    d.dim_dateid AS dim_dateId,
-//    r.rating AS rating
-//FROM ratings_staging r
-//JOIN dim_users u ON r.user_id = u.dim_userid
-//JOIN dim_movies m ON r.movie_id = m.dim_moviesId
-//JOIN dim_date d ON CAST(r.rated_at AS DATE) = d.date;
+select * from dim_time;
 
 
-CREATE OR REPLACE TABLE fact_ratings AS
+CREATE OR REPLACE TABLE fact_rating AS
 SELECT
-    r.id AS fact_ratingId,
-    r.user_id AS dim_userId,
-    r.movie_id AS dim_moviesId,
-    r.rating AS rating,
+    r.id AS fact_ratingid,
     r.rated_at AS rated_at,
-    (SELECT LISTAGG(tg.tags, ', ') WITHIN GROUP (ORDER BY tg.tags)
-     FROM tags_staging tg
-     WHERE tg.user_id = r.user_id AND tg.movie_id = r.movie_id) AS tags,
-    d.dim_dateid AS dim_dateId
+    r.rating,
+    COALESCE(LISTAGG(tg.movie_id || '-' || tg.user_id, ',') WITHIN GROUP (ORDER BY tg.movie_id, tg.user_id), '') AS tags,
+    d.dim_dateid AS dim_dateid,
+    t.dim_timeid AS dim_timeid,
+    u.dim_userid AS dim_userid,
+    m.dim_movieid AS dim_movieid
 FROM ratings_staging r
-LEFT JOIN dim_date d 
-    ON CAST(r.rated_at AS DATE) = d.date;
+JOIN dim_date d ON CAST(r.rated_at AS DATE) = d.date
+JOIN dim_time t ON DATE_PART(hour, r.rated_at) = t.hour
+                AND DATE_PART(minute, r.rated_at) = t.minute
+                AND DATE_PART(second, r.rated_at) = t.second
+LEFT JOIN dim_users u ON r.user_id = u.dim_userid
+LEFT JOIN dim_movies m ON r.movie_id = m.dim_movieid
+LEFT JOIN dim_tags tg ON r.movie_id = tg.movie_id
+GROUP BY r.id, r.rated_at, r.rating, d.dim_dateid, t.dim_timeid, u.dim_userid, m.dim_movieid
+ORDER BY r.id;
 
 
-
-select * from fact_ratings;
+select * from fact_rating;
 
 DROP TABLE IF EXISTS age_group_staging; 
 DROP TABLE IF EXISTS genres_movies_staging;
